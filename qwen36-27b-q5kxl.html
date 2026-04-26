@@ -1130,6 +1130,10 @@ class Game {
     this.pillars.forEach(p => p.deactivate());
     this.pillars = [];
 
+    // Reset camera to dragon's starting position
+    camera.position.set(CFG.cameraOffset.x, 5 + CFG.cameraOffset.y, CFG.cameraOffset.z);
+    camera.lookAt(5, 5, 0);
+
     this.startScreenEl.style.display = 'none';
     this.gameOverEl.style.display = 'none';
     this.updateHearts();
