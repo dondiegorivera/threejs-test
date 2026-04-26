@@ -1141,11 +1141,17 @@ class Game {
     this.score = Math.floor(this.distance / 10) + this.score;
     this.updateScore();
 
-    // Move dragon forward
-    this.dragon.group.position.x += CFG.forwardSpeed * dt;
-
     // Update dragon
     this.dragon.update(dt);
+
+    // Only move forward if dragon is alive
+    if (this.dragon.alive) {
+      this.dragon.group.position.x += CFG.forwardSpeed * dt;
+    } else {
+      // Dragon died — trigger game over
+      this.gameOver();
+      return;
+    }
 
     // Update terrain
     this.terrain.update(this.dragon.group.position.x);
