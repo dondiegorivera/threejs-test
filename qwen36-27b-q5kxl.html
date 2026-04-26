@@ -1,0 +1,1250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Voxel Dragon Flight</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; background: #000; font-family: 'Courier New', monospace; touch-action: none; }
+canvas { display: block; }
+#ui {
+position: absolute; top: 0; left: 0; width: 100%; pointer-events: none;
+padding: 15px 20px; display: flex; justify-content: space-between; align-items: flex-start;
+}
+#hearts { display: flex; gap: 6px; }
+.heart { width: 32px; height: 32px; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5)); }
+#score-display {
+color: #fff; font-size: 22px; font-weight: bold;
+text-shadow: 2px 2px 0 #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000;
+letter-spacing: 1px;
+}
+#game-over {
+position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+display: none; flex-direction: column; align-items: center; justify-content: center;
+background: rgba(0,0,0,0.7); pointer-events: auto;
+}
+#game-over h1 {
+color: #ff4444; font-size: 52px; margin-bottom: 10px;
+text-shadow: 3px 3px 0 #000;
+}
+#game-over .final-score {
+color: #ffcc00; font-size: 28px; margin-bottom: 30px;
+text-shadow: 2px 2px 0 #000;
+}
+#game-over button {
+padding: 14px 40px; font-size: 22px; font-family: 'Courier New', monospace;
+background: #4CAF50; color: #fff; border: 4px solid #2E7D32;
+cursor: pointer; pointer-events: auto; font-weight: bold;
+text-shadow: 1px 1px 0 #000;
+box-shadow: 0 4px 0 #1B5E20;
+transition: transform 0.1s;
+}
+#game-over button:active { transform: translateY(3px); box-shadow: 0 1px 0 #1B5E20; }
+#start-screen {
+position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+display: flex; flex-direction: column; align-items: center; justify-content: center;
+background: rgba(0,0,0,0.6); pointer-events: auto;
+}
+#start-screen h1 {
+color: #4CAF50; font-size: 44px; margin-bottom: 8px;
+text-shadow: 3px 3px 0 #000;
+}
+#start-screen .subtitle {
+color: #ffcc00; font-size: 18px; margin-bottom: 30px;
+text-shadow: 1px 1px 0 #000;
+}
+#start-screen .controls {
+color: #ccc; font-size: 14px; margin-bottom: 25px; text-align: center; line-height: 1.8;
+text-shadow: 1px 1px 0 #000;
+}
+#start-screen button {
+padding: 14px 50px; font-size: 24px; font-family: 'Courier New', monospace;
+background: #4CAF50; color: #fff; border: 4px solid #2E7D32;
+cursor: pointer; pointer-events: auto; font-weight: bold;
+text-shadow: 1px 1px 0 #000;
+box-shadow: 0 4px 0 #1B5E20;
+transition: transform 0.1s;
+}
+#start-screen button:active { transform: translateY(3px); box-shadow: 0 1px 0 #1B5E20; }
+#mobile-hint {
+position: absolute; bottom: 20px; left: 0; width: 100%;
+text-align: center; color: rgba(255,255,255,0.5); font-size: 13px;
+pointer-events: none; text-shadow: 1px 1px 0 #000;
+}
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div id="hearts"></div>
+  <div id="score-display">SCORE: 0</div>
+</div>
+
+<div id="start-screen">
+  <h1>🐉 VOXEL DRAGON</h1>
+  <div class="subtitle">A Blocky Adventure</div>
+  <div class="controls">
+    <b>SPACE / Left Click</b> — Flap Wings<br>
+    <b>F / Right Click</b> — Spit Fireball<br>
+    <span style="color:#aaa">Mobile: Tap Left / Right side</span>
+  </div>
+  <button id="start-btn">START GAME</button>
+</div>
+
+<div id="game-over">
+  <h1>GAME OVER</h1>
+  <div class="final-score" id="final-score">Score: 0</div>
+  <button id="restart-btn">PLAY AGAIN</button>
+</div>
+
+<div id="mobile-hint">Tap left to flap · Tap right to fire</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ============================================================
+//  VOXEL DRAGON FLIGHT — Complete Game
+// ============================================================
+
+// --- Utility ---
+const lerp = (a, b, t) => a + (b - a) * t;
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+const randInt = (lo, hi) => Math.floor(rand(lo, hi + 1));
+
+// ============================================================
+//  GAME CONFIG
+// ============================================================
+const CFG = {
+  gravity: -28,
+  flapVel: 11,
+  forwardSpeed: 14,
+  fireballSpeed: 22,
+  fireballGravity: -18,
+  arrowSpeed: 16,
+  maxHP: 3,
+  pillarSpawnInterval: 3.5,
+  archerSpawnInterval: 6,
+  pillarGap: 7,
+  pillarMinHeight: 4,
+  pillarMaxHeight: 14,
+  groundY: -6,
+  cameraOffset: { x: -8, y: 3, z: 18 },
+  cameraFOV: 45,
+  chunkSize: 20,
+  chunkCount: 5,
+  cloudCount: 12,
+};
+
+// ============================================================
+//  THREE.JS SETUP
+// ============================================================
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87CEEB);
+scene.fog = new THREE.Fog(0x87CEEB, 60, 120);
+
+const camera = new THREE.PerspectiveCamera(CFG.cameraFOV, window.innerWidth / window.innerHeight, 0.1, 200);
+
+// Lighting
+const hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x556B2F, 0.6);
+scene.add(hemiLight);
+
+const dirLight = new THREE.DirectionalLight(0xFFF4E0, 1.0);
+dirLight.position.set(10, 20, 10);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.set(2048, 2048);
+dirLight.shadow.camera.left = -40;
+dirLight.shadow.camera.right = 40;
+dirLight.shadow.camera.top = 30;
+dirLight.shadow.camera.bottom = -20;
+dirLight.shadow.camera.near = 1;
+dirLight.shadow.camera.far = 80;
+dirLight.shadow.bias = -0.001;
+scene.add(dirLight);
+
+const ambientLight = new THREE.AmbientLight(0x404060, 0.3);
+scene.add(ambientLight);
+
+// ============================================================
+//  MATERIALS (shared)
+// ============================================================
+const MAT = {
+  grass: new THREE.MeshLambertMaterial({ color: 0x5CB340 }),
+  dirt: new THREE.MeshLambertMaterial({ color: 0x8B6914 }),
+  stone: new THREE.MeshLambertMaterial({ color: 0x888888 }),
+  stoneDark: new THREE.MeshLambertMaterial({ color: 0x666666 }),
+  dragonBody: new THREE.MeshLambertMaterial({ color: 0x4CAF50 }),
+  dragonBelly: new THREE.MeshLambertMaterial({ color: 0x81C784 }),
+  dragonWing: new THREE.MeshLambertMaterial({ color: 0xE53935 }),
+  dragonEye: new THREE.MeshLambertMaterial({ color: 0xFFFF00 }),
+  dragonPupil: new THREE.MeshLambertMaterial({ color: 0x000000 }),
+  dragonHorn: new THREE.MeshLambertMaterial({ color: 0xFF9800 }),
+  archerBody: new THREE.MeshLambertMaterial({ color: 0x8D6E63 }),
+  archerHead: new THREE.MeshLambertMaterial({ color: 0xFFCC80 }),
+  archerHat: new THREE.MeshLambertMaterial({ color: 0x5D4037 }),
+  archerBow: new THREE.MeshLambertMaterial({ color: 0x6D4C41 }),
+  fireball: new THREE.MeshBasicMaterial({ color: 0xFF6600 }),
+  fireballGlow: new THREE.MeshBasicMaterial({ color: 0xFFAA00, transparent: true, opacity: 0.5 }),
+  arrow: new THREE.MeshLambertMaterial({ color: 0x9E9E9E }),
+  arrowTip: new THREE.MeshLambertMaterial({ color: 0x607D8B }),
+  arrowFletch: new THREE.MeshLambertMaterial({ color: 0xF44336 }),
+  cloud: new THREE.MeshLambertMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.85 }),
+  particle: new THREE.MeshBasicMaterial({ color: 0xFF4444 }),
+  particleOrange: new THREE.MeshBasicMaterial({ color: 0xFF8800 }),
+  particleYellow: new THREE.MeshBasicMaterial({ color: 0xFFDD00 }),
+  groundGrass: new THREE.MeshLambertMaterial({ color: 0x4CAF50 }),
+  groundDirt: new THREE.MeshLambertMaterial({ color: 0x795548 }),
+  groundStone: new THREE.MeshLambertMaterial({ color: 0x757575 }),
+  flower: new THREE.MeshLambertMaterial({ color: 0xFF69B4 }),
+  flowerYellow: new THREE.MeshLambertMaterial({ color: 0xFFEB3B }),
+  treeTrunk: new THREE.MeshLambertMaterial({ color: 0x6D4C41 }),
+  treeLeaves: new THREE.MeshLambertMaterial({ color: 0x2E7D32 }),
+};
+
+// ============================================================
+//  OBJECT POOL
+// ============================================================
+class ObjectPool {
+  constructor(createFn, resetFn, initialSize = 20) {
+    this.createFn = createFn;
+    this.resetFn = resetFn;
+    this.active = [];
+    this.inactive = [];
+    for (let i = 0; i < initialSize; i++) {
+      const obj = this.createFn();
+      obj.visible = false;
+      this.inactive.push(obj);
+    }
+  }
+  acquire() {
+    let obj;
+    if (this.inactive.length > 0) {
+      obj = this.inactive.pop();
+    } else {
+      obj = this.createFn();
+    }
+    obj.visible = true;
+    this.active.push(obj);
+    return obj;
+  }
+  release(obj) {
+    obj.visible = false;
+    const idx = this.active.indexOf(obj);
+    if (idx !== -1) this.active.splice(idx, 1);
+    this.resetFn(obj);
+    this.inactive.push(obj);
+  }
+  releaseAll() {
+    while (this.active.length > 0) {
+      this.release(this.active[0]);
+    }
+  }
+}
+
+// ============================================================
+//  PARTICLE SYSTEM
+// ============================================================
+class ParticleSystem {
+  constructor() {
+    this.particles = [];
+    this.maxParticles = 200;
+  }
+  emit(position, count, color, speed = 8, life = 0.8) {
+    const mat = new THREE.MeshBasicMaterial({ color });
+    for (let i = 0; i < count && this.particles.length < this.maxParticles; i++) {
+      const geo = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(position);
+      mesh.castShadow = false;
+      scene.add(mesh);
+      this.particles.push({
+        mesh,
+        vel: new THREE.Vector3(rand(-speed, speed), rand(0, speed), rand(-speed, speed)),
+        life: rand(life * 0.5, life),
+        maxLife: life,
+      });
+    }
+  }
+  update(dt) {
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.life -= dt;
+      if (p.life <= 0) {
+        scene.remove(p.mesh);
+        p.mesh.geometry.dispose();
+        p.mesh.material.dispose();
+        this.particles.splice(i, 1);
+        continue;
+      }
+      p.vel.y += CFG.gravity * 0.3 * dt;
+      p.mesh.position.addScaledVector(p.vel, dt);
+      const t = p.life / p.maxLife;
+      p.mesh.scale.setScalar(t);
+      p.mesh.material.opacity = t;
+      p.mesh.material.transparent = true;
+    }
+  }
+}
+
+// ============================================================
+//  TERRAIN MANAGER (InstancedMesh)
+// ============================================================
+class TerrainManager {
+  constructor() {
+    this.chunks = [];
+    this.chunkSize = CFG.chunkSize;
+    this.chunkCount = CFG.chunkCount;
+    this.groundY = CFG.groundY;
+    this.nextChunkX = 0;
+    this.initChunks();
+  }
+  initChunks() {
+    for (let i = 0; i < this.chunkCount; i++) {
+      this.createChunk(i * this.chunkSize);
+    }
+    this.nextChunkX = this.chunkCount * this.chunkSize;
+  }
+  createChunk(startX) {
+    const chunk = { startX, meshes: [] };
+
+    // Ground layer - grass
+    const grassGeo = new THREE.BoxGeometry(1, 0.5, 1);
+    const grassCount = this.chunkSize * 3;
+    const grassMesh = new THREE.InstancedMesh(grassGeo, MAT.grass, grassCount);
+    grassMesh.receiveShadow = true;
+    grassMesh.castShadow = true;
+    const dummy = new THREE.Object3D();
+    let idx = 0;
+    for (let x = 0; x < this.chunkSize; x++) {
+      for (let z = -1; z <= 1; z++) {
+        dummy.position.set(startX + x, this.groundY, z);
+        dummy.updateMatrix();
+        grassMesh.setMatrixAt(idx++, dummy.matrix);
+      }
+    }
+    grassMesh.instanceMatrix.needsUpdate = true;
+    scene.add(grassMesh);
+    chunk.meshes.push(grassMesh);
+
+    // Dirt layers
+    for (let dy = 1; dy <= 3; dy++) {
+      const dirtMesh = new THREE.InstancedMesh(grassGeo, MAT.dirt, grassCount);
+      dirtMesh.receiveShadow = true;
+      idx = 0;
+      for (let x = 0; x < this.chunkSize; x++) {
+        for (let z = -1; z <= 1; z++) {
+          dummy.position.set(startX + x, this.groundY - dy * 0.5, z);
+          dummy.updateMatrix();
+          dirtMesh.setMatrixAt(idx++, dummy.matrix);
+        }
+      }
+      dirtMesh.instanceMatrix.needsUpdate = true;
+      scene.add(dirtMesh);
+      chunk.meshes.push(dirtMesh);
+    }
+
+    // Occasional flowers
+    for (let x = 0; x < this.chunkSize; x++) {
+      if (Math.random() < 0.15) {
+        const flowerGeo = new THREE.BoxGeometry(0.2, 0.3, 0.2);
+        const flowerMat = Math.random() > 0.5 ? MAT.flower : MAT.flowerYellow;
+        const flower = new THREE.Mesh(flowerGeo, flowerMat);
+        flower.position.set(startX + x + 0.5, this.groundY + 0.4, rand(-0.5, 0.5));
+        scene.add(flower);
+        chunk.meshes.push(flower);
+      }
+    }
+
+    // Occasional trees
+    if (Math.random() < 0.2) {
+      const tx = startX + randInt(2, this.chunkSize - 2);
+      this.addTree(tx, this.groundY + 0.25, chunk);
+    }
+
+    this.chunks.push(chunk);
+  }
+  addTree(x, y, chunk) {
+    const trunkGeo = new THREE.BoxGeometry(0.6, 2.5, 0.6);
+    const trunk = new THREE.Mesh(trunkGeo, MAT.treeTrunk);
+    trunk.position.set(x, y + 1.25, 0);
+    trunk.castShadow = true;
+    scene.add(trunk);
+    chunk.meshes.push(trunk);
+
+    const leafGeo = new THREE.BoxGeometry(2.5, 2.5, 2.5);
+    const leaves = new THREE.Mesh(leafGeo, MAT.treeLeaves);
+    leaves.position.set(x, y + 3.5, 0);
+    leaves.castShadow = true;
+    scene.add(leaves);
+    chunk.meshes.push(leaves);
+
+    const leafGeo2 = new THREE.BoxGeometry(1.8, 1.8, 1.8);
+    const leaves2 = new THREE.Mesh(leafGeo2, MAT.treeLeaves);
+    leaves2.position.set(x, y + 5, 0);
+    leaves2.castShadow = true;
+    scene.add(leaves2);
+    chunk.meshes.push(leaves2);
+  }
+  update(dragonX) {
+    // Remove chunks behind
+    while (this.chunks.length > 0 && this.chunks[0].startX + this.chunkSize < dragonX - this.chunkSize) {
+      const chunk = this.chunks.shift();
+      chunk.meshes.forEach(m => {
+        scene.remove(m);
+        if (m.geometry) m.geometry.dispose();
+      });
+    }
+    // Add chunks ahead
+    while (this.nextChunkX < dragonX + this.chunkSize * 3) {
+      this.createChunk(this.nextChunkX);
+      this.nextChunkX += this.chunkSize;
+    }
+  }
+}
+
+// ============================================================
+//  CLOUD SYSTEM
+// ============================================================
+class CloudSystem {
+  constructor() {
+    this.clouds = [];
+    for (let i = 0; i < CFG.cloudCount; i++) {
+      this.clouds.push(this.createCloud());
+    }
+  }
+  createCloud() {
+    const group = new THREE.Group();
+    const blocks = randInt(3, 6);
+    for (let i = 0; i < blocks; i++) {
+      const size = rand(1.5, 3);
+      const geo = new THREE.BoxGeometry(size, size * 0.5, size);
+      const mesh = new THREE.Mesh(geo, MAT.cloud);
+      mesh.position.set(rand(-size, size), rand(-0.5, 0.5), rand(-size * 0.5, size * 0.5));
+      group.add(mesh);
+    }
+    group.position.set(rand(-20, 80), rand(12, 22), rand(-15, -5));
+    scene.add(group);
+    return { group, speed: rand(0.5, 2) };
+  }
+  update(dt, dragonX) {
+    this.clouds.forEach(c => {
+      c.group.position.x += c.speed * dt;
+      if (c.group.position.x > dragonX + 50) {
+        c.group.position.x = dragonX - 30 - rand(0, 20);
+        c.group.position.y = rand(12, 22);
+      }
+    });
+  }
+}
+
+// ============================================================
+//  DRAGON
+// ============================================================
+class Dragon {
+  constructor() {
+    this.group = new THREE.Group();
+    this.velocity = 0;
+    this.hp = CFG.maxHP;
+    this.alive = true;
+    this.wingAngle = 0;
+    this.invincibleTimer = 0;
+    this.build();
+    scene.add(this.group);
+  }
+  build() {
+    // Body
+    const bodyGeo = new THREE.BoxGeometry(1.6, 1.0, 1.0);
+    this.body = new THREE.Mesh(bodyGeo, MAT.dragonBody);
+    this.body.castShadow = true;
+    this.group.add(this.body);
+
+    // Belly
+    const bellyGeo = new THREE.BoxGeometry(1.2, 0.5, 0.8);
+    this.belly = new THREE.Mesh(bellyGeo, MAT.dragonBelly);
+    this.belly.position.set(0, -0.3, 0);
+    this.group.add(this.belly);
+
+    // Head
+    const headGeo = new THREE.BoxGeometry(0.9, 0.8, 0.8);
+    this.head = new THREE.Mesh(headGeo, MAT.dragonBody);
+    this.head.position.set(1.0, 0.2, 0);
+    this.head.castShadow = true;
+    this.group.add(this.head);
+
+    // Snout
+    const snoutGeo = new THREE.BoxGeometry(0.6, 0.4, 0.5);
+    this.snout = new THREE.Mesh(snoutGeo, MAT.dragonBody);
+    this.snout.position.set(1.6, 0.0, 0);
+    this.group.add(this.snout);
+
+    // Eyes
+    const eyeGeo = new THREE.BoxGeometry(0.15, 0.2, 0.15);
+    const pupilGeo = new THREE.BoxGeometry(0.08, 0.12, 0.08);
+
+    const eyeL = new THREE.Mesh(eyeGeo, MAT.dragonEye);
+    eyeL.position.set(1.3, 0.45, 0.35);
+    this.group.add(eyeL);
+    const pupilL = new THREE.Mesh(pupilGeo, MAT.dragonPupil);
+    pupilL.position.set(1.38, 0.45, 0.38);
+    this.group.add(pupilL);
+
+    const eyeR = new THREE.Mesh(eyeGeo, MAT.dragonEye);
+    eyeR.position.set(1.3, 0.45, -0.35);
+    this.group.add(eyeR);
+    const pupilR = new THREE.Mesh(pupilGeo, MAT.dragonPupil);
+    pupilR.position.set(1.38, 0.45, -0.38);
+    this.group.add(pupilR);
+
+    // Horns
+    const hornGeo = new THREE.BoxGeometry(0.15, 0.5, 0.15);
+    const hornL = new THREE.Mesh(hornGeo, MAT.dragonHorn);
+    hornL.position.set(0.8, 0.75, 0.3);
+    hornL.rotation.z = -0.3;
+    this.group.add(hornL);
+    const hornR = new THREE.Mesh(hornGeo, MAT.dragonHorn);
+    hornR.position.set(0.8, 0.75, -0.3);
+    hornR.rotation.z = -0.3;
+    this.group.add(hornR);
+
+    // Wings
+    this.wingL = new THREE.Group();
+    this.wingR = new THREE.Group();
+
+    const wingGeo = new THREE.BoxGeometry(1.2, 0.1, 2.0);
+    const wingMembraneL = new THREE.Mesh(wingGeo, MAT.dragonWing);
+    wingMembraneL.position.set(-0.3, 0.5, 0.8);
+    wingMembraneL.castShadow = true;
+    this.wingL.add(wingMembraneL);
+
+    const wingBoneGeo = new THREE.BoxGeometry(0.1, 0.1, 2.2);
+    const wingBoneL = new THREE.Mesh(wingBoneGeo, MAT.dragonBody);
+    wingBoneL.position.set(-0.3, 0.5, 0.8);
+    this.wingL.add(wingBoneL);
+
+    const wingMembraneR = new THREE.Mesh(wingGeo, MAT.dragonWing);
+    wingMembraneR.position.set(-0.3, 0.5, -0.8);
+    wingMembraneR.castShadow = true;
+    this.wingR.add(wingMembraneR);
+
+    const wingBoneR = new THREE.Mesh(wingBoneGeo, MAT.dragonBody);
+    wingBoneR.position.set(-0.3, 0.5, -0.8);
+    this.wingR.add(wingBoneR);
+
+    this.wingL.position.set(-0.2, 0.3, 0);
+    this.wingR.position.set(-0.2, 0.3, 0);
+    this.group.add(this.wingL);
+    this.group.add(this.wingR);
+
+    // Tail
+    const tailGeo = new THREE.BoxGeometry(0.8, 0.3, 0.3);
+    this.tail = new THREE.Mesh(tailGeo, MAT.dragonBody);
+    this.tail.position.set(-1.2, -0.1, 0);
+    this.tail.castShadow = true;
+    this.group.add(this.tail);
+
+    const tailTipGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+    const tailTip = new THREE.Mesh(tailTipGeo, MAT.dragonWing);
+    tailTip.position.set(-1.8, -0.1, 0);
+    this.group.add(tailTip);
+
+    // Legs
+    const legGeo = new THREE.BoxGeometry(0.3, 0.5, 0.3);
+    const legPositions = [
+      [0.4, -0.7, 0.4], [0.4, -0.7, -0.4],
+      [-0.4, -0.7, 0.4], [-0.4, -0.7, -0.4]
+    ];
+    legPositions.forEach(pos => {
+      const leg = new THREE.Mesh(legGeo, MAT.dragonBody);
+      leg.position.set(...pos);
+      leg.castShadow = true;
+      this.group.add(leg);
+    });
+  }
+  flap() {
+    if (!this.alive) return;
+    this.velocity = CFG.flapVel;
+  }
+  takeDamage() {
+    if (this.invincibleTimer > 0 || !this.alive) return;
+    this.hp--;
+    this.invincibleTimer = 1.5;
+    if (this.hp <= 0) {
+      this.alive = false;
+    }
+  }
+  update(dt) {
+    if (!this.alive) return;
+
+    this.velocity += CFG.gravity * dt;
+    this.group.position.y += this.velocity * dt;
+
+    // Wing animation
+    this.wingAngle += dt * 12;
+    const wingFlap = Math.sin(this.wingAngle) * 0.6;
+    this.wingL.rotation.x = wingFlap;
+    this.wingR.rotation.x = wingFlap;
+
+    // Slight body tilt based on velocity
+    this.body.rotation.z = clamp(-this.velocity * 0.02, -0.4, 0.4);
+    this.head.rotation.z = clamp(-this.velocity * 0.015, -0.3, 0.3);
+
+    // Invincibility blink
+    if (this.invincibleTimer > 0) {
+      this.invincibleTimer -= dt;
+      this.group.visible = Math.sin(this.invincibleTimer * 20) > 0;
+    } else {
+      this.group.visible = true;
+    }
+
+    // Ground collision
+    if (this.group.position.y <= CFG.groundY + 0.5) {
+      this.alive = false;
+      this.hp = 0;
+    }
+  }
+  getPosition() {
+    return this.group.position.clone();
+  }
+  getBounds() {
+    return {
+      minX: this.group.position.x - 0.8,
+      maxX: this.group.position.x + 1.6,
+      minY: this.group.position.y - 0.5,
+      maxY: this.group.position.y + 0.5,
+    };
+  }
+  reset() {
+    this.group.position.set(0, 5, 0);
+    this.velocity = 0;
+    this.hp = CFG.maxHP;
+    this.alive = true;
+    this.invincibleTimer = 0;
+    this.group.visible = true;
+  }
+}
+
+// ============================================================
+//  ARCHER
+// ============================================================
+class Archer {
+  constructor() {
+    this.group = new THREE.Group();
+    this.alive = true;
+    this.shootTimer = rand(1.0, 2.5);
+    this.build();
+  }
+  build() {
+    // Body
+    const bodyGeo = new THREE.BoxGeometry(0.6, 0.9, 0.5);
+    this.body = new THREE.Mesh(bodyGeo, MAT.archerBody);
+    this.body.position.y = 0.9;
+    this.body.castShadow = true;
+    this.group.add(this.body);
+
+    // Head
+    const headGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    this.head = new THREE.Mesh(headGeo, MAT.archerHead);
+    this.head.position.y = 1.65;
+    this.head.castShadow = true;
+    this.group.add(this.head);
+
+    // Hat (cone-like)
+    const hatGeo = new THREE.BoxGeometry(0.6, 0.3, 0.6);
+    this.hat = new THREE.Mesh(hatGeo, MAT.archerHat);
+    this.hat.position.y = 2.0;
+    this.group.add(this.hat);
+
+    // Legs
+    const legGeo = new THREE.BoxGeometry(0.25, 0.5, 0.25);
+    const legL = new THREE.Mesh(legGeo, MAT.archerBody);
+    legL.position.set(-0.15, 0.25, 0);
+    this.group.add(legL);
+    const legR = new THREE.Mesh(legGeo, MAT.archerBody);
+    legR.position.set(0.15, 0.25, 0);
+    this.group.add(legR);
+
+    // Bow
+    const bowGeo = new THREE.BoxGeometry(0.08, 1.0, 0.08);
+    this.bow = new THREE.Mesh(bowGeo, MAT.archerBow);
+    this.bow.position.set(0.4, 1.2, 0.3);
+    this.bow.rotation.z = -0.3;
+    this.group.add(this.bow);
+
+    // Eyes
+    const eyeGeo = new THREE.BoxGeometry(0.08, 0.08, 0.08);
+    const eyeMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    const eyeL = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeL.position.set(0.26, 1.7, 0.15);
+    this.group.add(eyeL);
+    const eyeR = new THREE.Mesh(eyeGeo, eyeMat);
+    eyeR.position.set(0.26, 1.7, -0.15);
+    this.group.add(eyeR);
+  }
+  setPosition(x, y) {
+    this.group.position.set(x, y, 0);
+  }
+  update(dt, dragonPos, arrowPool, game) {
+    if (!this.alive) return;
+
+    // Face dragon
+    if (dragonPos.x > this.group.position.x) {
+      this.group.rotation.y = 0;
+    } else {
+      this.group.rotation.y = Math.PI;
+    }
+
+    // Shoot
+    this.shootTimer -= dt;
+    if (this.shootTimer <= 0) {
+      this.shootTimer = rand(1.5, 3.0);
+      this.shoot(dragonPos, arrowPool, game);
+    }
+  }
+  shoot(dragonPos, arrowPool, game) {
+    const arrow = arrowPool.acquire();
+    const dir = new THREE.Vector3().subVectors(dragonPos, this.group.position).normalize();
+    // Add upward angle
+    dir.y = Math.max(dir.y, 0.3);
+    dir.normalize();
+
+    arrow.group.position.copy(this.group.position);
+    arrow.group.position.y += 1.2;
+    arrow.velocity.copy(dir.multiplyScalar(CFG.arrowSpeed));
+    arrow.alive = true;
+    game.arrows.push(arrow);
+  }
+  die(particles) {
+    this.alive = false;
+    particles.emit(this.group.position.clone().add(new THREE.Vector3(0, 1, 0)), 15, 0xFF4444, 6, 0.6);
+    particles.emit(this.group.position.clone().add(new THREE.Vector3(0, 1, 0)), 8, 0xFF8800, 4, 0.4);
+  }
+}
+
+// ============================================================
+//  PROJECTILES
+// ============================================================
+class Fireball {
+  constructor() {
+    this.group = new THREE.Group();
+    this.alive = false;
+    this.velocity = new THREE.Vector3();
+
+    const coreGeo = new THREE.BoxGeometry(0.4, 0.4, 0.4);
+    this.core = new THREE.Mesh(coreGeo, MAT.fireball);
+    this.group.add(this.core);
+
+    const glowGeo = new THREE.BoxGeometry(0.7, 0.7, 0.7);
+    this.glow = new THREE.Mesh(glowGeo, MAT.fireballGlow);
+    this.group.add(this.glow);
+
+    scene.add(this.group);
+  }
+  shoot(fromPos, dir) {
+    this.group.position.copy(fromPos);
+    this.velocity.copy(dir.multiplyScalar(CFG.fireballSpeed));
+    this.alive = true;
+    this.group.visible = true;
+  }
+  update(dt) {
+    if (!this.alive) return;
+    this.velocity.y += CFG.fireballGravity * dt;
+    this.group.position.addScaledVector(this.velocity, dt);
+    this.core.rotation.x += dt * 8;
+    this.core.rotation.z += dt * 5;
+    this.glow.rotation.y -= dt * 6;
+
+    // Ground hit
+    if (this.group.position.y <= CFG.groundY) {
+      this.alive = false;
+    }
+  }
+  reset() {
+    this.alive = false;
+    this.group.visible = false;
+    this.group.position.set(0, -100, 0);
+  }
+}
+
+class Arrow {
+  constructor() {
+    this.group = new THREE.Group();
+    this.alive = false;
+    this.velocity = new THREE.Vector3();
+
+    // Shaft
+    const shaftGeo = new THREE.BoxGeometry(0.8, 0.06, 0.06);
+    this.shaft = new THREE.Mesh(shaftGeo, MAT.arrow);
+    this.group.add(this.shaft);
+
+    // Tip
+    const tipGeo = new THREE.BoxGeometry(0.2, 0.12, 0.12);
+    this.tip = new THREE.Mesh(tipGeo, MAT.arrowTip);
+    this.tip.position.x = 0.5;
+    this.group.add(this.tip);
+
+    // Fletching
+    const fletchGeo = new THREE.BoxGeometry(0.15, 0.15, 0.15);
+    this.fletch = new THREE.Mesh(fletchGeo, MAT.arrowFletch);
+    this.fletch.position.x = -0.45;
+    this.group.add(this.fletch);
+
+    scene.add(this.group);
+  }
+  update(dt) {
+    if (!this.alive) return;
+    this.velocity.y += CFG.gravity * 0.4 * dt;
+    this.group.position.addScaledVector(this.velocity, dt);
+
+    // Orient to velocity
+    if (this.velocity.length() > 0.1) {
+      const dir = this.velocity.clone().normalize();
+      const angle = Math.atan2(dir.y, dir.x);
+      this.group.rotation.z = angle;
+    }
+
+    // Ground hit
+    if (this.group.position.y <= CFG.groundY) {
+      this.alive = false;
+    }
+  }
+  reset() {
+    this.alive = false;
+    this.group.visible = false;
+    this.group.position.set(0, -100, 0);
+  }
+}
+
+// ============================================================
+//  STONE PILLARS (Hazards)
+// ============================================================
+class StonePillar {
+  constructor() {
+    this.group = new THREE.Group();
+    this.active = false;
+    this.type = 'falling'; // 'falling' or 'rising'
+    this.velocity = 0;
+    this.blocks = [];
+  }
+  spawn(x, type) {
+    this.active = true;
+    this.type = type;
+    this.group.position.x = x;
+    this.group.position.z = 0;
+
+    // Clear old blocks
+    this.blocks.forEach(b => this.group.remove(b));
+    this.blocks = [];
+
+    const height = randInt(CFG.pillarMinHeight, CFG.pillarMaxHeight);
+    const blockGeo = new THREE.BoxGeometry(1, 1, 1);
+
+    for (let i = 0; i < height; i++) {
+      const mat = i % 2 === 0 ? MAT.stone : MAT.stoneDark;
+      const block = new THREE.Mesh(blockGeo, mat);
+      block.castShadow = true;
+      block.receiveShadow = true;
+      this.group.add(block);
+      this.blocks.push(block);
+    }
+
+    if (type === 'falling') {
+      this.group.position.y = 25;
+      this.velocity = -rand(8, 14);
+      this.blocks.forEach((b, i) => {
+        b.position.set(rand(-1, 1), i, rand(-1, 1));
+      });
+    } else {
+      this.group.position.y = CFG.groundY - height;
+      this.velocity = rand(10, 18);
+      this.blocks.forEach((b, i) => {
+        b.position.set(rand(-1, 1), i, rand(-1, 1));
+      });
+    }
+
+    scene.add(this.group);
+  }
+  update(dt) {
+    if (!this.active) return;
+    this.group.position.y += this.velocity * dt;
+
+    if (this.type === 'falling' && this.group.position.y <= CFG.groundY) {
+      this.group.position.y = CFG.groundY;
+      this.velocity = 0;
+      // Settle on ground
+      this.blocks.forEach((b, i) => {
+        b.position.y = i;
+      });
+    }
+
+    if (this.type === 'rising' && this.group.position.y >= 15) {
+      this.active = false;
+    }
+  }
+  getBounds() {
+    if (!this.active) return null;
+    const minX = this.group.position.x - 1.5;
+    const maxX = this.group.position.x + 1.5;
+    const minY = this.group.position.y;
+    const maxY = this.group.position.y + this.blocks.length;
+    return { minX, maxX, minY, maxY };
+  }
+  deactivate() {
+    this.active = false;
+    scene.remove(this.group);
+  }
+}
+
+// ============================================================
+//  MAIN GAME CLASS
+// ============================================================
+class Game {
+  constructor() {
+    this.state = 'menu'; // menu, playing, gameover
+    this.score = 0;
+    this.distance = 0;
+    this.time = 0;
+
+    this.dragon = new Dragon();
+    this.terrain = new TerrainManager();
+    this.clouds = new CloudSystem();
+    this.particles = new ParticleSystem();
+
+    // Pools
+    this.fireballPool = new ObjectPool(
+      () => { const fb = new Fireball(); return fb; },
+      (fb) => fb.reset()
+    );
+    this.arrowPool = new ObjectPool(
+      () => { const a = new Arrow(); return a; },
+      (a) => a.reset()
+    );
+
+    this.fireballs = [];
+    this.arrows = [];
+    this.archers = [];
+    this.pillars = [];
+
+    // Timers
+    this.pillarTimer = 0;
+    this.archerTimer = 0;
+
+    // UI
+    this.heartsEl = document.getElementById('hearts');
+    this.scoreEl = document.getElementById('score-display');
+    this.gameOverEl = document.getElementById('game-over');
+    this.finalScoreEl = document.getElementById('final-score');
+    this.startScreenEl = document.getElementById('start-screen');
+
+    this.setupInput();
+    this.updateHearts();
+    this.animate();
+  }
+
+  setupInput() {
+    // Keyboard
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' || e.code === 'ArrowUp') {
+        e.preventDefault();
+        this.dragon.flap();
+      }
+      if (e.code === 'KeyF') {
+        this.shootFireball();
+      }
+    });
+
+    // Mouse
+    renderer.domElement.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      if (e.button === 0) {
+        this.dragon.flap();
+      } else if (e.button === 2) {
+        this.shootFireball();
+      }
+    });
+    renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // Touch
+    renderer.domElement.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      for (const touch of e.changedTouches) {
+        if (touch.clientX < window.innerWidth / 2) {
+          this.dragon.flap();
+        } else {
+          this.shootFireball();
+        }
+      }
+    }, { passive: false });
+
+    // Buttons
+    document.getElementById('start-btn').addEventListener('click', () => this.start());
+    document.getElementById('restart-btn').addEventListener('click', () => this.start());
+
+    // Resize
+    window.addEventListener('resize', () => this.onResize());
+  }
+
+  onResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+
+  start() {
+    this.state = 'playing';
+    this.score = 0;
+    this.distance = 0;
+    this.time = 0;
+    this.pillarTimer = 0;
+    this.archerTimer = 0;
+
+    this.dragon.reset();
+    this.fireballPool.releaseAll();
+    this.arrowPool.releaseAll();
+    this.fireballs = [];
+    this.arrows = [];
+    this.archers.forEach(a => scene.remove(a.group));
+    this.archers = [];
+    this.pillars.forEach(p => p.deactivate());
+    this.pillars = [];
+
+    this.startScreenEl.style.display = 'none';
+    this.gameOverEl.style.display = 'none';
+    this.updateHearts();
+    this.updateScore();
+  }
+
+  gameOver() {
+    this.state = 'gameover';
+    this.finalScoreEl.textContent = `Score: ${this.score}`;
+    this.gameOverEl.style.display = 'flex';
+    this.particles.emit(this.dragon.group.position.clone(), 30, 0xFF4444, 10, 1.0);
+    this.particles.emit(this.dragon.group.position.clone(), 20, 0xFF8800, 8, 0.8);
+  }
+
+  shootFireball() {
+    if (this.state !== 'playing' || !this.dragon.alive) return;
+    const fb = this.fireballPool.acquire();
+    const pos = this.dragon.getPosition().clone();
+    pos.x += 1.5;
+    pos.y += 0.2;
+    const dir = new THREE.Vector3(1, 0.1, 0);
+    fb.shoot(pos, dir);
+    this.fireballs.push(fb);
+  }
+
+  spawnPillar() {
+    const pillar = new StonePillar();
+    const x = this.dragon.group.position.x + rand(30, 50);
+    const type = Math.random() > 0.5 ? 'falling' : 'rising';
+    pillar.spawn(x, type);
+    this.pillars.push(pillar);
+  }
+
+  spawnArcher() {
+    const archer = new Archer();
+    const x = this.dragon.group.position.x + rand(25, 45);
+    archer.setPosition(x, CFG.groundY + 0.25);
+    scene.add(archer.group);
+    this.archers.push(archer);
+  }
+
+  checkCollisions() {
+    if (!this.dragon.alive) return;
+    const db = this.dragon.getBounds();
+
+    // Fireballs vs Archers
+    for (let i = this.fireballs.length - 1; i >= 0; i--) {
+      const fb = this.fireballs[i];
+      if (!fb.alive) continue;
+      const fbPos = fb.group.position;
+      for (let j = this.archers.length - 1; j >= 0; j--) {
+        const archer = this.archers[j];
+        if (!archer.alive) continue;
+        const ax = archer.group.position.x;
+        const ay = archer.group.position.y;
+        if (Math.abs(fbPos.x - ax) < 1.0 && Math.abs(fbPos.y - (ay + 1)) < 1.2 && Math.abs(fbPos.z) < 1.0) {
+          archer.die(this.particles);
+          scene.remove(archer.group);
+          this.archers.splice(j, 1);
+          fb.alive = false;
+          this.fireballPool.release(fb);
+          this.fireballs.splice(i, 1);
+          this.score += 50;
+          this.updateScore();
+          break;
+        }
+      }
+    }
+
+    // Arrows vs Dragon
+    for (let i = this.arrows.length - 1; i >= 0; i--) {
+      const arrow = this.arrows[i];
+      if (!arrow.alive) continue;
+      const ap = arrow.group.position;
+      if (ap.x > db.minX && ap.x < db.maxX && ap.y > db.minY && ap.y < db.maxY) {
+        this.dragon.takeDamage();
+        this.particles.emit(ap.clone(), 8, 0xFF0000, 5, 0.4);
+        arrow.alive = false;
+        this.arrowPool.release(arrow);
+        this.arrows.splice(i, 1);
+        this.updateHearts();
+        if (!this.dragon.alive) this.gameOver();
+      }
+    }
+
+    // Pillars vs Dragon
+    for (const pillar of this.pillars) {
+      const pb = pillar.getBounds();
+      if (!pb) continue;
+      if (db.maxX > pb.minX && db.minX < pb.maxX && db.maxY > pb.minY && db.minY < pb.maxY) {
+        this.dragon.takeDamage();
+        this.particles.emit(this.dragon.group.position.clone(), 10, 0x888888, 6, 0.5);
+        this.updateHearts();
+        if (!this.dragon.alive) this.gameOver();
+      }
+    }
+  }
+
+  updateHearts() {
+    this.heartsEl.innerHTML = '';
+    for (let i = 0; i < CFG.maxHP; i++) {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'heart');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z');
+      path.setAttribute('fill', i < this.dragon.hp ? '#E53935' : '#55555555');
+      svg.appendChild(path);
+      this.heartsEl.appendChild(svg);
+    }
+  }
+
+  updateScore() {
+    this.scoreEl.textContent = `SCORE: ${this.score}`;
+  }
+
+  update(dt) {
+    if (this.state !== 'playing') return;
+
+    this.time += dt;
+    this.distance += CFG.forwardSpeed * dt;
+    this.score = Math.floor(this.distance / 10) + this.score;
+    this.updateScore();
+
+    // Move dragon forward
+    this.dragon.group.position.x += CFG.forwardSpeed * dt;
+
+    // Update dragon
+    this.dragon.update(dt);
+
+    // Update terrain
+    this.terrain.update(this.dragon.group.position.x);
+
+    // Update clouds
+    this.clouds.update(dt, this.dragon.group.position.x);
+
+    // Update particles
+    this.particles.update(dt);
+
+    // Spawn pillars
+    this.pillarTimer += dt;
+    if (this.pillarTimer >= CFG.pillarSpawnInterval) {
+      this.pillarTimer = 0;
+      this.spawnPillar();
+    }
+
+    // Spawn archers
+    this.archerTimer += dt;
+    if (this.archerTimer >= CFG.archerSpawnInterval) {
+      this.archerTimer = 0;
+      this.spawnArcher();
+    }
+
+    // Update fireballs
+    for (let i = this.fireballs.length - 1; i >= 0; i--) {
+      const fb = this.fireballs[i];
+      fb.update(dt);
+      if (!fb.alive || fb.group.position.x > this.dragon.group.position.x + 60 ||
+          fb.group.position.x < this.dragon.group.position.x - 20) {
+        this.fireballPool.release(fb);
+        this.fireballs.splice(i, 1);
+      }
+    }
+
+    // Update arrows
+    for (let i = this.arrows.length - 1; i >= 0; i--) {
+      const arrow = this.arrows[i];
+      arrow.update(dt);
+      if (!arrow.alive || arrow.group.position.x > this.dragon.group.position.x + 60 ||
+          arrow.group.position.x < this.dragon.group.position.x - 20) {
+        this.arrowPool.release(arrow);
+        this.arrows.splice(i, 1);
+      }
+    }
+
+    // Update archers
+    for (let i = this.archers.length - 1; i >= 0; i--) {
+      const archer = this.archers[i];
+      if (!archer.alive) {
+        this.archers.splice(i, 1);
+        continue;
+      }
+      archer.update(dt, this.dragon.group.position, this.arrowPool, this);
+      // Remove archers too far behind
+      if (archer.group.position.x < this.dragon.group.position.x - 30) {
+        scene.remove(archer.group);
+        this.archers.splice(i, 1);
+      }
+    }
+
+    // Update pillars
+    for (let i = this.pillars.length - 1; i >= 0; i--) {
+      const pillar = this.pillars[i];
+      pillar.update(dt);
+      if (!pillar.active || pillar.group.position.x < this.dragon.group.position.x - 30) {
+        pillar.deactivate();
+        this.pillars.splice(i, 1);
+      }
+    }
+
+    // Check collisions
+    this.checkCollisions();
+
+    // Camera follow
+    const targetX = this.dragon.group.position.x + CFG.cameraOffset.x;
+    const targetY = this.dragon.group.position.y + CFG.cameraOffset.y;
+    camera.position.x = lerp(camera.position.x, targetX, 0.08);
+    camera.position.y = lerp(camera.position.y, targetY, 0.06);
+    camera.position.z = CFG.cameraOffset.z;
+    camera.lookAt(this.dragon.group.position.x + 5, this.dragon.group.position.y, 0);
+
+    // Update directional light to follow dragon
+    dirLight.position.x = this.dragon.group.position.x + 10;
+    dirLight.target.position.copy(this.dragon.group.position);
+    dirLight.target.updateMatrixWorld();
+  }
+
+  animate() {
+    requestAnimationFrame(() => this.animate());
+    const dt = Math.min(1/60, 0.05);
+    this.update(dt);
+    renderer.render(scene, camera);
+  }
+}
+
+// ============================================================
+//  START GAME
+// ============================================================
+const game = new Game();
+</script>
+</body>
+</html>  

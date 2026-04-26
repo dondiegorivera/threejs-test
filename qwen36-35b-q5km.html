@@ -1,0 +1,1195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Voxel Dragon - Flappy Combat</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+canvas { display: block; }
+#ui {
+  position: absolute; top: 0; left: 0; width: 100%; pointer-events: none;
+  font-family: 'Courier New', monospace; z-index: 10;
+}
+#health-bar {
+  position: absolute; top: 15px; left: 15px;
+  display: flex; gap: 6px;
+}
+.heart {
+  width: 32px; height: 32px;
+  background: #e74c3c;
+  clip-path: polygon(50% 100%, 0% 35%, 0% 0%, 30% 0%, 50% 20%, 70% 0%, 100% 0%, 100% 35%);
+  transition: opacity 0.3s;
+}
+.heart.empty { opacity: 0.2; }
+#score-display {
+  position: absolute; top: 15px; right: 15px;
+  color: #fff; font-size: 22px; font-weight: bold;
+  text-shadow: 2px 2px 0 #000, -1px -1px 0 #000;
+}
+#game-over {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  text-align: center; display: none; pointer-events: auto;
+}
+#game-over h1 {
+  color: #e74c3c; font-size: 48px; text-shadow: 3px 3px 0 #000;
+  font-family: 'Courier New', monospace;
+}
+#game-over p {
+  color: #fff; font-size: 24px; text-shadow: 2px 2px 0 #000;
+  font-family: 'Courier New', monospace; margin: 10px 0;
+}
+#game-over button {
+  pointer-events: auto; padding: 12px 36px; font-size: 20px;
+  font-family: 'Courier New', monospace; background: #2ecc71;
+  border: 3px solid #27ae60; color: #fff; cursor: pointer;
+  margin-top: 15px;
+}
+#game-over button:hover { background: #27ae60; }
+#start-screen {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  text-align: center; pointer-events: auto;
+}
+#start-screen h1 {
+  color: #2ecc71; font-size: 52px; text-shadow: 3px 3px 0 #000;
+  font-family: 'Courier New', monospace;
+}
+#start-screen p {
+  color: #fff; font-size: 16px; text-shadow: 1px 1px 0 #000;
+  font-family: 'Courier New', monospace; margin: 8px 0;
+}
+#start-screen button {
+  pointer-events: auto; padding: 14px 44px; font-size: 22px;
+  font-family: 'Courier New', monospace; background: #e67e22;
+  border: 3px solid #d35400; color: #fff; cursor: pointer;
+  margin-top: 20px;
+}
+#start-screen button:hover { background: #d35400; }
+#mobile-controls {
+  position: absolute; bottom: 20px; left: 0; width: 100%;
+  display: none; pointer-events: none;
+}
+.mobile-btn {
+  position: absolute; bottom: 10px; width: 100px; height: 60px;
+  background: rgba(255,255,255,0.15); border: 2px solid rgba(255,255,255,0.3);
+  border-radius: 10px; color: rgba(255,255,255,0.6);
+  font-family: 'Courier New', monospace; font-size: 13px;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: auto;
+}
+#btn-flap { left: 20px; }
+#btn-fire { right: 20px; }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div id="health-bar"></div>
+  <div id="score-display">Score: 0</div>
+</div>
+
+<div id="start-screen">
+  <h1>🐉 VOXEL DRAGON</h1>
+  <p>Space / Click / Tap Left — Flap Wings</p>
+  <p>F / Right Click / Tap Right — Spit Fire</p>
+  <button id="start-btn">START GAME</button>
+</div>
+
+<div id="game-over">
+  <h1>GAME OVER</h1>
+  <p id="final-score">Score: 0</p>
+  <button id="restart-btn">PLAY AGAIN</button>
+</div>
+
+<div id="mobile-controls">
+  <div class="mobile-btn" id="btn-flap">FLAP</div>
+  <div class="mobile-btn" id="btn-fire">FIRE</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ============================================================
+// CONFIGURATION
+// ============================================================
+const CONFIG = {
+  GRAVITY: -28,
+  FLAP_VELOCITY: 11,
+  DRAGON_SPEED: 8,
+  FIREBALL_SPEED: 18,
+  FIREBALL_GRAVITY: -18,
+  ARROW_SPEED: 14,
+  ARROW_GRAVITY: -8,
+  STONE_PILLAR_SPEED: 12,
+  STONE_PILLAR_INTERVAL: 3.5,
+  ARCHER_SPAWN_INTERVAL: 5,
+  ARCHER_SHOOT_INTERVAL: 2.5,
+  MAX_HP: 3,
+  GROUND_Y: -4,
+  VIEW_WIDTH: 24,
+  VIEW_HEIGHT: 16,
+  BLOCK_SIZE: 1,
+  CLOUD_COUNT: 15,
+  PARTICLE_LIFE: 1.2,
+  FIREBALL_COOLDOWN: 0.4,
+};
+
+// ============================================================
+// UTILITY
+// ============================================================
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ============================================================
+// MATERIAL CACHE
+// ============================================================
+const MAT = {
+  grass: new THREE.MeshLambertMaterial({ color: 0x4CAF50 }),
+  dirt: new THREE.MeshLambertMaterial({ color: 0x8B6914 }),
+  stone: new THREE.MeshLambertMaterial({ color: 0x808080 }),
+  stoneDark: new THREE.MeshLambertMaterial({ color: 0x606060 }),
+  dragonBody: new THREE.MeshLambertMaterial({ color: 0x2E7D32 }),
+  dragonBelly: new THREE.MeshLambertMaterial({ color: 0x81C784 }),
+  dragonWing: new THREE.MeshLambertMaterial({ color: 0xC62828 }),
+  dragonEye: new THREE.MeshLambertMaterial({ color: 0xFFEB3B }),
+  dragonHorn: new THREE.MeshLambertMaterial({ color: 0xFFB300 }),
+  archerBody: new THREE.MeshLambertMaterial({ color: 0x795548 }),
+  archerHead: new THREE.MeshLambertMaterial({ color: 0xFFCC80 }),
+  archerHat: new THREE.MeshLambertMaterial({ color: 0x5D4037 }),
+  archerBow: new THREE.MeshLambertMaterial({ color: 0x4E342E }),
+  fireball: new THREE.MeshBasicMaterial({ color: 0xFF6600 }),
+  fireballGlow: new THREE.MeshBasicMaterial({ color: 0xFFAA00, transparent: true, opacity: 0.6 }),
+  arrow: new THREE.MeshLambertMaterial({ color: 0x8D6E63 }),
+  arrowHead: new THREE.MeshLambertMaterial({ color: 0x9E9E9E }),
+  cloud: new THREE.MeshLambertMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.85 }),
+  sky: new THREE.MeshBasicMaterial({ color: 0x87CEEB }),
+  particle: new THREE.MeshBasicMaterial({ color: 0xFF4444 }),
+  particleFire: new THREE.MeshBasicMaterial({ color: 0xFF8800 }),
+  particleGold: new THREE.MeshBasicMaterial({ color: 0xFFD700 }),
+  heart: new THREE.MeshLambertMaterial({ color: 0xE74C3C }),
+  heartEmpty: new THREE.MeshLambertMaterial({ color: 0x444444 }),
+};
+
+// ============================================================
+// GEOMETRY CACHE
+// ============================================================
+const GEO = {
+  block: new THREE.BoxGeometry(1, 1, 1),
+  thinBlock: new THREE.BoxGeometry(1, 0.3, 1),
+  thinBlock2: new THREE.BoxGeometry(0.3, 1, 1),
+  arrowShaft: new THREE.BoxGeometry(0.12, 0.12, 1.2),
+  arrowHead: new THREE.BoxGeometry(0.3, 0.3, 0.15),
+  fireball: new THREE.BoxGeometry(0.5, 0.5, 0.5),
+  fireballGlow: new THREE.BoxGeometry(0.7, 0.7, 0.7),
+  particle: new THREE.BoxGeometry(0.15, 0.15, 0.15),
+  heart: new THREE.BoxGeometry(0.6, 0.6, 0.15),
+};
+
+// ============================================================
+// POOL SYSTEM
+// ============================================================
+class ObjectPool {
+  constructor(createFn, resetFn, initialSize = 30) {
+    this.createFn = createFn;
+    this.resetFn = resetFn;
+    this.pool = [];
+    this.active = [];
+    for (let i = 0; i < initialSize; i++) {
+      const obj = createFn();
+      obj.visible = false;
+      this.pool.push(obj);
+    }
+  }
+  acquire() {
+    let obj = this.pool.pop();
+    if (!obj) obj = this.createFn();
+    obj.visible = true;
+    this.active.push(obj);
+    return obj;
+  }
+  release(obj) {
+    const idx = this.active.indexOf(obj);
+    if (idx >= 0) {
+      this.active.splice(idx, 1);
+      obj.visible = false;
+      this.pool.push(obj);
+    }
+  }
+  releaseAll() {
+    for (const obj of this.active) {
+      obj.visible = false;
+      this.pool.push(obj);
+    }
+    this.active.length = 0;
+  }
+}
+
+// ============================================================
+// PARTICLE SYSTEM
+// ============================================================
+class ParticlePool extends ObjectPool {
+  constructor() {
+    super(
+      () => {
+        const mat = [MAT.particle, MAT.particleFire, MAT.particleGold][randInt(0, 2)];
+        const mesh = new THREE.Mesh(GEO.particle, mat.clone());
+        mesh.userData.life = 0;
+        mesh.userData.maxLife = CONFIG.PARTICLE_LIFE;
+        mesh.userData.vel = new THREE.Vector3();
+        return mesh;
+      },
+      (obj) => {
+        obj.position.set(0, 0, 0);
+        obj.scale.set(1, 1, 1);
+        obj.userData.life = 0;
+        obj.visible = false;
+      },
+      60
+    );
+  }
+  emit(pos, count = 8, color = null) {
+    for (let i = 0; i < count; i++) {
+      const p = this.acquire();
+      p.position.copy(pos);
+      p.userData.vel.set(rand(-4, 4), rand(2, 8), rand(-2, 2));
+      p.userData.life = rand(0.4, CONFIG.PARTICLE_LIFE);
+      p.userData.maxLife = p.userData.life;
+      if (color) p.material.color.set(color);
+      const s = rand(0.5, 1.5);
+      p.scale.set(s, s, s);
+    }
+  }
+  update(dt) {
+    for (let i = this.active.length - 1; i >= 0; i--) {
+      const p = this.active[i];
+      p.userData.life -= dt;
+      if (p.userData.life <= 0) {
+        this.release(p);
+        continue;
+      }
+      p.position.addScaledVector(p.userData.vel, dt);
+      p.userData.vel.y -= 12 * dt;
+      const t = p.userData.life / p.userData.maxLife;
+      p.scale.setScalar(t);
+      p.material.opacity = t;
+      p.material.transparent = true;
+    }
+  }
+}
+
+// ============================================================
+// PROJECTILE POOL (Fireballs & Arrows)
+// ============================================================
+class ProjectilePool extends ObjectPool {
+  constructor(isFireball = false) {
+    super(
+      () => {
+        const group = new THREE.Group();
+        if (isFireball) {
+          const core = new THREE.Mesh(GEO.fireball, MAT.fireball);
+          const glow = new THREE.Mesh(GEO.fireballGlow, MAT.fireballGlow);
+          group.add(core, glow);
+        } else {
+          const shaft = new THREE.Mesh(GEO.arrowShaft, MAT.arrow);
+          const head = new THREE.Mesh(GEO.arrowHead, MAT.arrowHead);
+          head.position.z = 0.6;
+          group.add(shaft, head);
+        }
+        group.userData.vel = new THREE.Vector3();
+        group.userData.gravity = 0;
+        group.userData.life = 0;
+        group.userData.maxLife = 3;
+        group.userData.isFireball = isFireball;
+        group.userData.active = false;
+        group.visible = false;
+        return group;
+      },
+      (obj) => {
+        obj.position.set(0, 0, 0);
+        obj.rotation.set(0, 0, 0);
+        obj.userData.vel.set(0, 0, 0);
+        obj.userData.life = 0;
+        obj.userData.active = false;
+        obj.visible = false;
+      },
+      20
+    );
+  }
+  update(dt) {
+    for (let i = this.active.length - 1; i >= 0; i--) {
+      const p = this.active[i];
+      if (!p.userData.active) { this.release(p); continue; }
+      p.userData.life -= dt;
+      if (p.userData.life <= 0) { this.release(p); continue; }
+      p.position.addScaledVector(p.userData.vel, dt);
+      p.userData.vel.y += p.userData.gravity * dt;
+      // Rotate to face velocity direction
+      const angle = Math.atan2(p.userData.vel.y, p.userData.vel.x);
+      p.rotation.z = angle;
+    }
+  }
+}
+
+// ============================================================
+// DRAGON
+// ============================================================
+class Dragon {
+  constructor(scene) {
+    this.scene = scene;
+    this.hp = CONFIG.MAX_HP;
+    this.maxHp = CONFIG.MAX_HP;
+    this.x = 0;
+    this.y = 0;
+    this.vy = 0;
+    this.facing = 1;
+    this.fireCooldown = 0;
+    this.invincible = 0;
+    this.wingAngle = 0;
+    this.mesh = this.buildMesh();
+    scene.add(this.mesh);
+  }
+
+  buildMesh() {
+    const group = new THREE.Group();
+
+    // Body
+    const body = new THREE.Mesh(GEO.block, MAT.dragonBody);
+    body.scale.set(1.2, 0.9, 0.8);
+    group.add(body);
+
+    // Belly
+    const belly = new THREE.Mesh(GEO.thinBlock, MAT.dragonBelly);
+    belly.position.set(0, -0.25, 0.2);
+    belly.scale.set(1.0, 0.3, 0.6);
+    group.add(belly);
+
+    // Head
+    const head = new THREE.Mesh(GEO.block, MAT.dragonBody);
+    head.position.set(0.7, 0.3, 0);
+    head.scale.set(0.7, 0.6, 0.6);
+    group.add(head);
+
+    // Snout
+    const snout = new THREE.Mesh(GEO.block, MAT.dragonBody);
+    snout.position.set(1.1, 0.2, 0);
+    snout.scale.set(0.4, 0.35, 0.4);
+    group.add(snout);
+
+    // Eye
+    const eye = new THREE.Mesh(GEO.thinBlock, MAT.dragonEye);
+    eye.position.set(0.9, 0.45, 0.25);
+    eye.scale.set(0.15, 0.15, 0.15);
+    group.add(eye);
+
+    // Horns
+    const horn1 = new THREE.Mesh(GEO.thinBlock2, MAT.dragonHorn);
+    horn1.position.set(0.5, 0.7, 0.15);
+    horn1.rotation.z = -0.3;
+    group.add(horn1);
+
+    const horn2 = new THREE.Mesh(GEO.thinBlock2, MAT.dragonHorn);
+    horn2.position.set(0.5, 0.7, -0.15);
+    horn2.rotation.z = -0.3;
+    group.add(horn2);
+
+    // Wings
+    this.wingL = new THREE.Group();
+    const wingLMesh = new THREE.Mesh(GEO.block, MAT.dragonWing);
+    wingLMesh.scale.set(0.8, 0.15, 0.6);
+    wingLMesh.position.set(-0.2, 0.1, 0.4);
+    this.wingL.add(wingLMesh);
+    this.wingL.position.set(-0.1, 0.3, 0.4);
+    group.add(this.wingL);
+
+    this.wingR = new THREE.Group();
+    const wingRMesh = new THREE.Mesh(GEO.block, MAT.dragonWing);
+    wingRMesh.scale.set(0.8, 0.15, 0.6);
+    wingRMesh.position.set(-0.2, 0.1, -0.4);
+    this.wingR.add(wingRMesh);
+    this.wingR.position.set(-0.1, 0.3, -0.4);
+    group.add(this.wingR);
+
+    // Tail
+    const tail1 = new THREE.Mesh(GEO.block, MAT.dragonBody);
+    tail1.position.set(-0.9, 0, 0);
+    tail1.scale.set(0.6, 0.5, 0.5);
+    group.add(tail1);
+
+    const tail2 = new THREE.Mesh(GEO.block, MAT.dragonBody);
+    tail2.position.set(-1.3, 0.1, 0);
+    tail2.scale.set(0.4, 0.35, 0.35);
+    group.add(tail2);
+
+    const tail3 = new THREE.Mesh(GEO.block, MAT.dragonBody);
+    tail3.position.set(-1.6, 0.2, 0);
+    tail3.scale.set(0.25, 0.25, 0.25);
+    group.add(tail3);
+
+    // Legs
+    const leg1 = new THREE.Mesh(GEO.block, MAT.dragonBody);
+    leg1.position.set(0.2, -0.6, 0.25);
+    leg1.scale.set(0.3, 0.4, 0.3);
+    group.add(leg1);
+
+    const leg2 = new THREE.Mesh(GEO.block, MAT.dragonBody);
+    leg2.position.set(0.2, -0.6, -0.25);
+    leg2.scale.set(0.3, 0.4, 0.3);
+    group.add(leg2);
+
+    group.position.set(this.x, this.y, 0);
+    return group;
+  }
+
+  flap() {
+    this.vy = CONFIG.FLAP_VELOCITY;
+    this.wingAngle = 0.8;
+  }
+
+  fire() {
+    if (this.fireCooldown > 0) return null;
+    this.fireCooldown = CONFIG.FIREBALL_COOLDOWN;
+    const fb = this.game.fireballPool.acquire();
+    fb.position.set(this.x + 1.5, this.y + 0.3, 0);
+    fb.userData.vel.set(CONFIG.FIREBALL_SPEED, 2, 0);
+    fb.userData.gravity = CONFIG.FIREBALL_GRAVITY;
+    fb.userData.life = fb.userData.maxLife;
+    fb.userData.active = true;
+    return fb;
+  }
+
+  takeDamage() {
+    if (this.invincible > 0) return;
+    this.hp--;
+    this.invincible = 1.5;
+    this.game.updateHealthBar();
+    if (this.hp <= 0) {
+      this.game.gameOver();
+    }
+  }
+
+  update(dt) {
+    // Gravity
+    this.vy += CONFIG.GRAVITY * dt;
+    this.y += this.vy * dt;
+
+    // Ground collision = game over
+    if (this.y < CONFIG.GROUND_Y + 0.5) {
+      this.game.gameOver();
+      return;
+    }
+
+    // Ceiling
+    if (this.y > 8) { this.y = 8; this.vy = 0; }
+
+    // Move forward
+    this.x += CONFIG.DRAGON_SPEED * dt;
+
+    // Wing animation
+    this.wingAngle *= 0.9;
+    this.wingL.rotation.z = -0.5 + this.wingAngle;
+    this.wingR.rotation.z = 0.5 - this.wingAngle;
+
+    // Cooldowns
+    if (this.fireCooldown > 0) this.fireCooldown -= dt;
+    if (this.invincible > 0) {
+      this.invincible -= dt;
+      this.mesh.visible = Math.floor(this.invincible * 10) % 2 === 0;
+    } else {
+      this.mesh.visible = true;
+    }
+
+    this.mesh.position.set(this.x, this.y, 0);
+  }
+
+  reset() {
+    this.hp = this.maxHp;
+    this.x = 0;
+    this.y = 2;
+    this.vy = 0;
+    this.fireCooldown = 0;
+    this.invincible = 0;
+    this.mesh.visible = true;
+    this.mesh.position.set(0, 2, 0);
+  }
+}
+
+// ============================================================
+// ARCHER
+// ============================================================
+class Archer {
+  constructor(scene, x) {
+    this.scene = scene;
+    this.x = x;
+    this.y = CONFIG.GROUND_Y + 0.5;
+    this.alive = true;
+    this.shootTimer = rand(1, 3);
+    this.flashTimer = 0;
+    this.mesh = this.buildMesh();
+    this.mesh.position.set(this.x, this.y, 0);
+    scene.add(this.mesh);
+  }
+
+  buildMesh() {
+    const group = new THREE.Group();
+
+    // Body
+    const body = new THREE.Mesh(GEO.block, MAT.archerBody);
+    body.scale.set(0.6, 0.8, 0.4);
+    body.position.y = 0.1;
+    group.add(body);
+
+    // Head
+    const head = new THREE.Mesh(GEO.block, MAT.archerHead);
+    head.scale.set(0.45, 0.45, 0.45);
+    head.position.y = 0.7;
+    group.add(head);
+
+    // Hat
+    const hat = new THREE.Mesh(GEO.block, MAT.archerHat);
+    hat.scale.set(0.5, 0.2, 0.5);
+    hat.position.y = 0.95;
+    group.add(hat);
+
+    // Hat tip
+    const tip = new THREE.Mesh(GEO.block, MAT.archerHat);
+    tip.scale.set(0.15, 0.3, 0.15);
+    tip.position.set(0, 1.15, 0);
+    group.add(tip);
+
+    // Bow
+    const bow = new THREE.Mesh(GEO.block, MAT.archerBow);
+    bow.scale.set(0.1, 0.7, 0.1);
+    bow.position.set(0.4, 0.2, 0);
+    group.add(bow);
+
+    // Legs
+    const leg1 = new THREE.Mesh(GEO.block, MAT.archerBody);
+    leg1.scale.set(0.2, 0.4, 0.2);
+    leg1.position.set(-0.12, -0.5, 0.1);
+    group.add(leg1);
+
+    const leg2 = new THREE.Mesh(GEO.block, MAT.archerBody);
+    leg2.scale.set(0.2, 0.4, 0.2);
+    leg2.position.set(0.12, -0.5, 0.1);
+    group.add(leg2);
+
+    return group;
+  }
+
+  shoot(dragon) {
+    if (!this.alive) return null;
+    const arrow = this.game.arrowPool.acquire();
+    const dx = dragon.x - this.x;
+    const dy = dragon.y - this.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const speed = CONFIG.ARROW_SPEED;
+    arrow.position.set(this.x + 0.5, this.y + 0.5, 0);
+    arrow.userData.vel.set(
+      (dx / dist) * speed,
+      (dy / dist) * speed + 2,
+      0
+    );
+    arrow.userData.gravity = CONFIG.ARROW_GRAVITY;
+    arrow.userData.life = arrow.userData.maxLife;
+    arrow.userData.active = true;
+    return arrow;
+  }
+
+  die() {
+    this.alive = false;
+    this.game.particles.emit(this.mesh.position.clone(), 15, 0xE74C3C);
+    this.game.score += 50;
+    this.scene.remove(this.mesh);
+  }
+
+  update(dt, dragon) {
+    if (!this.alive) return;
+
+    this.shootTimer -= dt;
+    if (this.shootTimer <= 0) {
+      const arrow = this.shoot(dragon);
+      if (arrow) this.game.arrows.push(arrow);
+      this.shootTimer = CONFIG.ARCHER_SHOOT_INTERVAL;
+    }
+
+    if (this.flashTimer > 0) {
+      this.flashTimer -= dt;
+      this.mesh.children.forEach(c => {
+        if (c.material) c.material.emissive = new THREE.Color(0xFF0000);
+      });
+    } else {
+      this.mesh.children.forEach(c => {
+        if (c.material) c.material.emissive = new THREE.Color(0x000000);
+      });
+    }
+
+    this.mesh.position.set(this.x, this.y, 0);
+  }
+
+  reset(x) {
+    this.x = x;
+    this.alive = true;
+    this.shootTimer = rand(1, 3);
+    this.flashTimer = 0;
+    this.mesh.visible = true;
+    this.mesh.position.set(x, this.y, 0);
+    this.mesh.children.forEach(c => {
+      if (c.material) c.material.emissive = new THREE.Color(0x000000);
+    });
+  }
+}
+
+// ============================================================
+// STONE PILLAR (Hazard)
+// ============================================================
+class StonePillar {
+  constructor(scene, x, type) {
+    this.scene = scene;
+    this.x = x;
+    this.type = type; // 'falling' or 'rising'
+    this.alive = true;
+    this.blocks = [];
+    this.mesh = this.buildMesh();
+    this.scene.add(this.mesh);
+
+    if (type === 'falling') {
+      this.y = 10;
+      this.vy = 0;
+      this.targetY = CONFIG.GROUND_Y + 1.5 + rand(0, 2);
+    } else {
+      this.y = CONFIG.GROUND_Y - 2;
+      this.vy = 0;
+      this.targetY = CONFIG.GROUND_Y + 1.5 + rand(0, 2);
+    }
+  }
+
+  buildMesh() {
+    const group = new THREE.Group();
+    const mat = Math.random() > 0.5 ? MAT.stone : MAT.stoneDark;
+    for (let i = 0; i < 5; i++) {
+      const block = new THREE.Mesh(GEO.block, mat);
+      block.position.set(0, i * 1.05, 0);
+      block.castShadow = true;
+      block.receiveShadow = true;
+      group.add(block);
+      this.blocks.push(block);
+    }
+    return group;
+  }
+
+  update(dt) {
+    if (!this.alive) return;
+
+    if (this.type === 'falling') {
+      this.vy += 20 * dt;
+      this.y += this.vy * dt;
+      if (this.y <= this.targetY) {
+        this.y = this.targetY;
+        this.vy = 0;
+        // Bounce back up after a delay
+        setTimeout(() => {
+          if (this.alive) {
+            this.type = 'rising';
+            this.vy = -CONFIG.STONE_PILLAR_SPEED;
+          }
+        }, 1500);
+      }
+    } else {
+      this.vy -= 20 * dt;
+      this.y += this.vy * dt;
+      if (this.y <= this.targetY) {
+        this.y = this.targetY;
+        this.vy = 0;
+        setTimeout(() => {
+          if (this.alive) {
+            this.type = 'falling';
+            this.vy = 5;
+          }
+        }, 1000);
+      }
+    }
+
+    this.mesh.position.set(this.x, this.y, 0);
+  }
+
+  die() {
+    this.alive = false;
+    this.game.particles.emit(this.mesh.position.clone(), 10, 0x808080);
+    this.scene.remove(this.mesh);
+  }
+
+  reset(x, type) {
+    this.x = x;
+    this.type = type;
+    this.alive = true;
+    this.mesh.visible = true;
+    if (type === 'falling') {
+      this.y = 10;
+      this.vy = 0;
+    } else {
+      this.y = CONFIG.GROUND_Y - 2;
+      this.vy = 0;
+    }
+    this.mesh.position.set(x, this.y, 0);
+  }
+}
+
+// ============================================================
+// WORLD / TERRAIN
+// ============================================================
+class World {
+  constructor(scene) {
+    this.scene = scene;
+    this.groundBlocks = [];
+    this.clouds = [];
+    this.archers = [];
+    this.stonePillars = [];
+    this.fireballPool = new ProjectilePool(true);
+    this.arrowPool = new ProjectilePool(false);
+    this.particles = new ParticlePool();
+    this.score = 0;
+    this.distance = 0;
+    this.lastStoneX = -20;
+    this.lastArcherX = -15;
+    this.stoneTimer = 0;
+    this.archerTimer = 0;
+    this.buildGround();
+    this.buildClouds();
+    this.fireballPool.game = this;
+    this.arrowPool.game = this;
+    this.particles.game = this;
+  }
+
+  buildGround() {
+    // Create instanced ground
+    const totalBlocks = 600;
+    const instancedGround = new THREE.InstancedMesh(GEO.block, MAT.dirt, totalBlocks);
+    const instancedGrass = new THREE.InstancedMesh(GEO.block, MAT.grass, totalBlocks);
+    instancedGround.castShadow = true;
+    instancedGround.receiveShadow = true;
+    instancedGrass.receiveShadow = true;
+
+    const dummy = new THREE.Object3D();
+    let idx = 0;
+    for (let i = 0; i < totalBlocks; i++) {
+      const x = (i % 200) * 1.0 - 100;
+      const y = CONFIG.GROUND_Y - 0.5;
+      dummy.position.set(x, y, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      instancedGround.setMatrixAt(i, dummy.matrix);
+
+      const gy = CONFIG.GROUND_Y + 0.5;
+      dummy.position.set(x, gy, 0);
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      instancedGrass.setMatrixAt(i, dummy.matrix);
+    }
+
+    instancedGround.instanceMatrix.needsUpdate = true;
+    instancedGrass.instanceMatrix.needsUpdate = true;
+
+    this.scene.add(instancedGround);
+    this.scene.add(instancedGrass);
+    this.groundBlocks.push(instancedGround, instancedGrass);
+
+    // Background mountains (instanced)
+    const mountainMat = new THREE.MeshLambertMaterial({ color: 0x5D8A3C });
+    const mountainCount = 40;
+    const instancedMountains = new THREE.InstancedMesh(GEO.block, mountainMat, mountainCount);
+    for (let i = 0; i < mountainCount; i++) {
+      const x = i * 8 - 100 + rand(-2, 2);
+      const h = rand(3, 8);
+      dummy.position.set(x, CONFIG.GROUND_Y + h / 2, -5);
+      dummy.scale.set(rand(2, 5), h, rand(1, 3));
+      dummy.updateMatrix();
+      instancedMountains.setMatrixAt(i, dummy.matrix);
+    }
+    instancedMountains.instanceMatrix.needsUpdate = true;
+    this.scene.add(instancedMountains);
+    this.groundBlocks.push(instancedMountains);
+  }
+
+  buildClouds() {
+    for (let i = 0; i < CONFIG.CLOUD_COUNT; i++) {
+      const cloud = new THREE.Group();
+      const numBlocks = randInt(3, 6);
+      for (let j = 0; j < numBlocks; j++) {
+        const block = new THREE.Mesh(GEO.block, MAT.cloud);
+        block.position.set(rand(-1, 1), rand(-0.3, 0.3), rand(-0.5, 0.5));
+        block.scale.set(rand(0.6, 1.5), rand(0.4, 0.8), rand(0.5, 1));
+        cloud.add(block);
+      }
+      cloud.position.set(rand(-50, 100), rand(4, 9), rand(-8, -3));
+      cloud.userData.speed = rand(0.3, 1.2);
+      this.scene.add(cloud);
+      this.clouds.push(cloud);
+    }
+  }
+
+  spawnStonePillar(dragonX) {
+    const x = dragonX + rand(18, 30);
+    const type = Math.random() > 0.5 ? 'falling' : 'rising';
+    const pillar = new StonePillar(this.scene, x, type);
+    pillar.game = this;
+    this.stonePillars.push(pillar);
+  }
+
+  spawnArcher(dragonX) {
+    const x = dragonX + rand(20, 35);
+    const archer = new Archer(this.scene, x);
+    archer.game = this;
+    this.archers.push(archer);
+  }
+
+  update(dt, dragon) {
+    this.distance += CONFIG.DRAGON_SPEED * dt;
+    this.score = Math.floor(this.distance * 0.5);
+
+    // Update clouds
+    for (const cloud of this.clouds) {
+      cloud.position.x -= cloud.userData.speed * dt;
+      if (cloud.position.x < dragon.x - 30) {
+        cloud.position.x = dragon.x + rand(30, 60);
+        cloud.position.y = rand(4, 9);
+      }
+    }
+
+    // Spawn stone pillars
+    this.stoneTimer -= dt;
+    if (this.stoneTimer <= 0) {
+      this.spawnStonePillar(dragon.x);
+      this.stoneTimer = CONFIG.STONE_PILLAR_INTERVAL;
+    }
+
+    // Spawn archers
+    this.archerTimer -= dt;
+    if (this.archerTimer <= 0) {
+      this.spawnArcher(dragon.x);
+      this.archerTimer = CONFIG.ARCHER_SPAWN_INTERVAL;
+    }
+
+    // Update stone pillars
+    for (let i = this.stonePillars.length - 1; i >= 0; i--) {
+      const sp = this.stonePillars[i];
+      sp.update(dt);
+      // Remove if too far behind
+      if (sp.x < dragon.x - 30) {
+        this.scene.remove(sp.mesh);
+        this.stonePillars.splice(i, 1);
+      }
+    }
+
+    // Update archers
+    for (let i = this.archers.length - 1; i >= 0; i--) {
+      const archer = this.archers[i];
+      archer.update(dt, dragon);
+      if (archer.x < dragon.x - 30) {
+        this.scene.remove(archer.mesh);
+        this.archers.splice(i, 1);
+      }
+    }
+
+    // Update projectiles
+    this.fireballPool.update(dt);
+    this.arrowPool.update(dt);
+
+    // Update particles
+    this.particles.update(dt);
+
+    // Collision: fireballs vs archers
+    for (let i = this.fireballPool.active.length - 1; i >= 0; i--) {
+      const fb = this.fireballPool.active[i];
+      if (!fb.userData.active) continue;
+      for (const archer of this.archers) {
+        if (!archer.alive) continue;
+        const dx = fb.position.x - archer.x;
+        const dy = fb.position.y - archer.y;
+        if (Math.abs(dx) < 0.8 && Math.abs(dy) < 1.0) {
+          archer.die();
+          fb.userData.active = false;
+          this.fireballPool.release(fb);
+          this.particles.emit(fb.position.clone(), 12, 0xFF6600);
+          break;
+        }
+      }
+    }
+
+    // Collision: arrows vs dragon
+    for (const arrow of this.arrowPool.active) {
+      if (!arrow.userData.active) continue;
+      const dx = arrow.position.x - dragon.x;
+      const dy = arrow.position.y - dragon.y;
+      if (Math.abs(dx) < 0.7 && Math.abs(dy) < 0.7) {
+        dragon.takeDamage();
+        arrow.userData.active = false;
+        this.arrowPool.release(arrow);
+        this.particles.emit(arrow.position.clone(), 6, 0x9E9E9E);
+      }
+    }
+
+    // Collision: stone pillars vs dragon
+    for (const sp of this.stonePillars) {
+      if (!sp.alive) continue;
+      const dx = sp.x - dragon.x;
+      const dy = sp.y - dragon.y;
+      if (Math.abs(dx) < 1.2 && Math.abs(dy) < 2.5) {
+        dragon.takeDamage();
+        sp.die();
+        this.particles.emit(sp.mesh.position.clone(), 10, 0x808080);
+      }
+    }
+
+    // Collision: fireballs vs ground (destroy on impact)
+    for (const fb of this.fireballPool.active) {
+      if (!fb.userData.active) continue;
+      if (fb.position.y < CONFIG.GROUND_Y + 0.5) {
+        fb.userData.active = false;
+        this.fireballPool.release(fb);
+        this.particles.emit(fb.position.clone(), 8, 0xFF8800);
+      }
+    }
+
+    // Collision: arrows vs ground
+    for (const arrow of this.arrowPool.active) {
+      if (!arrow.userData.active) continue;
+      if (arrow.position.y < CONFIG.GROUND_Y + 0.5) {
+        arrow.userData.active = false;
+        this.arrowPool.release(arrow);
+        this.particles.emit(arrow.position.clone(), 4, 0x8D6E63);
+      }
+    }
+  }
+
+  reset() {
+    this.score = 0;
+    this.distance = 0;
+    this.stoneTimer = 0;
+    this.archerTimer = 0;
+
+    // Remove all archers
+    for (const a of this.archers) this.scene.remove(a.mesh);
+    this.archers.length = 0;
+
+    // Remove all stone pillars
+    for (const sp of this.stonePillars) this.scene.remove(sp.mesh);
+    this.stonePillars.length = 0;
+
+    // Release all pools
+    this.fireballPool.releaseAll();
+    this.arrowPool.releaseAll();
+    this.particles.releaseAll();
+  }
+}
+
+// ============================================================
+// GAME
+// ============================================================
+class Game {
+  constructor() {
+    this.state = 'menu'; // menu, playing, gameover
+    this.scene = new THREE.Scene();
+    this.camera = new THREE.OrthographicCamera(
+      -CONFIG.VIEW_WIDTH / 2, CONFIG.VIEW_WIDTH / 2,
+      CONFIG.VIEW_HEIGHT / 2, -CONFIG.VIEW_HEIGHT / 2,
+      0.1, 200
+    );
+    this.camera.position.z = 10;
+
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.setClearColor(0x87CEEB);
+    document.body.appendChild(this.renderer.domElement);
+
+    // Lighting
+    const hemiLight = new THREE.HemisphereLight(0x87CEEB, 0x4CAF50, 0.6);
+    this.scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0xFFF5E0, 1.0);
+    dirLight.position.set(10, 15, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 1024;
+    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.camera.left = -20;
+    dirLight.shadow.camera.right = 20;
+    dirLight.shadow.camera.top = 15;
+    dirLight.shadow.camera.bottom = -10;
+    this.scene.add(dirLight);
+
+    const dirLight2 = new THREE.DirectionalLight(0x88AAFF, 0.3);
+    dirLight2.position.set(-5, 5, -5);
+    this.scene.add(dirLight2);
+
+    // Sky gradient plane
+    const skyGeo = new THREE.PlaneGeometry(200, 50);
+    const skyMat = new THREE.MeshBasicMaterial({ color: 0x87CEEB, side: THREE.DoubleSide });
+    const sky = new THREE.Mesh(skyGeo, skyMat);
+    sky.position.set(0, 5, -20);
+    this.scene.add(sky);
+
+    // Sun
+    const sunGeo = new THREE.BoxGeometry(2, 2, 0.3);
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xFFF9C4 });
+    const sun = new THREE.Mesh(sunGeo, sunMat);
+    sun.position.set(8, 7, -15);
+    this.scene.add(sun);
+
+    // Initialize
+    this.world = new World(this.scene);
+    this.dragon = new Dragon(this.scene);
+    this.dragon.game = this.world;
+    this.world.fireballPool.game = this;
+    this.world.arrowPool.game = this;
+    this.world.particles.game = this;
+
+    this.arrows = []; // active arrow references
+    this.fireballs = []; // active fireball references
+
+    this.lastTime = 0;
+    this.setupInput();
+    this.updateHealthBar();
+    this.setupUI();
+
+    window.addEventListener('resize', () => this.onResize());
+    this.animate(0);
+  }
+
+  setupUI() {
+    document.getElementById('start-btn').addEventListener('click', () => this.start());
+    document.getElementById('restart-btn').addEventListener('click', () => this.start());
+
+    // Mobile controls
+    const isMobile = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent) || ('ontouchstart' in window);
+    if (isMobile) {
+      document.getElementById('mobile-controls').style.display = 'block';
+      document.getElementById('btn-flap').addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (this.state === 'playing') this.dragon.flap();
+      });
+      document.getElementById('btn-fire').addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (this.state === 'playing') this.dragon.fire();
+      });
+    }
+  }
+
+  setupInput() {
+    const flap = (e) => {
+      if (e) e.preventDefault();
+      if (this.state === 'playing') this.dragon.flap();
+    };
+    const fire = (e) => {
+      if (e) e.preventDefault();
+      if (this.state === 'playing') this.dragon.fire();
+    };
+
+    document.addEventListener('keydown', (e) => {
+      if (e.code === 'Space' || e.code === 'ArrowUp') flap(e);
+      if (e.code === 'KeyF') fire(e);
+    });
+
+    this.renderer.domElement.addEventListener('mousedown', (e) => {
+      if (e.button === 0) flap(e);
+      if (e.button === 2) fire(e);
+    });
+
+    this.renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // Touch support for desktop testing
+    this.renderer.domElement.addEventListener('touchstart', (e) => {
+      for (const touch of e.changedTouches) {
+        const x = touch.clientX;
+        if (x < window.innerWidth / 2) {
+          flap(e);
+        } else {
+          fire(e);
+        }
+      }
+    });
+  }
+
+  start() {
+    this.state = 'playing';
+    document.getElementById('start-screen').style.display = 'none';
+    document.getElementById('game-over').style.display = 'none';
+    this.dragon.reset();
+    this.world.reset();
+    this.world.score = 0;
+    this.world.distance = 0;
+  }
+
+  gameOver() {
+    this.state = 'gameover';
+    document.getElementById('game-over').style.display = 'block';
+    document.getElementById('final-score').textContent = `Score: ${this.world.score}`;
+  }
+
+  updateHealthBar() {
+    const bar = document.getElementById('health-bar');
+    bar.innerHTML = '';
+    for (let i = 0; i < this.dragon.maxHp; i++) {
+      const heart = document.createElement('div');
+      heart.className = 'heart' + (i >= this.dragon.hp ? ' empty' : '');
+      bar.appendChild(heart);
+    }
+  }
+
+  onResize() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    const aspect = w / h;
+    const baseHeight = CONFIG.VIEW_HEIGHT;
+    const baseWidth = baseHeight * aspect;
+
+    this.camera.left = -baseWidth / 2;
+    this.camera.right = baseWidth / 2;
+    this.camera.top = baseHeight / 2;
+    this.camera.bottom = -baseHeight / 2;
+    this.camera.updateProjectionMatrix();
+
+    this.renderer.setSize(w, h);
+  }
+
+  updateCamera() {
+    const targetX = this.dragon.x;
+    const targetY = this.dragon.y;
+    const camX = targetX;
+    const camY = targetY * 0.4 + 1;
+    this.camera.position.x += (camX - this.camera.position.x) * 0.08;
+    this.camera.position.y += (camY - this.camera.position.y) * 0.08;
+    this.camera.lookAt(this.camera.position.x, this.camera.position.y, 0);
+  }
+
+  animate(time) {
+    requestAnimationFrame((t) => this.animate(t));
+
+    const dt = Math.min((time - this.lastTime) / 1000, 0.05);
+    this.lastTime = time;
+
+    if (this.state === 'playing') {
+      this.dragon.update(dt);
+      this.world.update(dt, this.dragon);
+      this.updateCamera();
+
+      // Update score display
+      const totalScore = this.world.score + this.world.archers.filter(a => !a.alive).length * 50;
+      document.getElementById('score-display').textContent = `Score: ${totalScore}`;
+    }
+
+    this.renderer.render(this.scene, this.camera);
+  }
+}
+
+// ============================================================
+// INIT
+// ============================================================
+window.addEventListener('DOMContentLoaded', () => {
+  const game = new Game();
+});
+</script>
+</body>
+</html>
