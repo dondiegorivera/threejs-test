@@ -997,6 +997,7 @@ class Game {
     this.state = 'menu'; // menu, playing, gameover
     this.score = 0;
     this.distance = 0;
+    this.bonusScore = 0;
     this.time = 0;
 
     this.dragon = new Dragon();
@@ -1094,6 +1095,7 @@ class Game {
     this.state = 'playing';
     this.score = 0;
     this.distance = 0;
+    this.bonusScore = 0;
     this.time = 0;
     this.pillarTimer = 0;
     this.archerTimer = 0;
@@ -1183,7 +1185,7 @@ class Game {
           fb.alive = false;
           this.fireballPool.release(fb);
           this.fireballs.splice(i, 1);
-          this.score += 50;
+          this.bonusScore += 50;
           this.updateScore();
           break;
         }
@@ -1225,7 +1227,7 @@ class Game {
       const gb = gem.getBounds();
       if (db.maxX > gb.minX && db.minX < gb.maxX && db.maxY > gb.minY && db.minY < gb.maxY) {
         gem.collect();
-        this.score += gem.points;
+        this.bonusScore += gem.points;
         this.updateScore();
         // Sparkle particles
         const colors = gem.gemType === 'diamond' ? 0xFFFFFF : gem.gemType === 'sapphire' ? 0x4488FF : gem.gemType === 'ruby' ? 0xFF4466 : 0x00FF88;
@@ -1260,7 +1262,7 @@ class Game {
 
     this.time += dt;
     this.distance += CFG.forwardSpeed * dt;
-    this.score = Math.floor(this.distance / 10) + this.score;
+    this.score = Math.floor(this.distance / 10) + this.bonusScore;
     this.updateScore();
 
     // Update dragon
