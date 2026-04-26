@@ -605,8 +605,9 @@ class Dragon {
       this.group.visible = true;
     }
 
-    // Ground collision
-    if (this.group.position.y <= CFG.groundY + 0.5) {
+    // Ground collision — only die if actually over the ground strip (z: -1 to 1)
+    if (this.group.position.y <= CFG.groundY + 0.5 &&
+        this.group.position.z >= -1 && this.group.position.z <= 1) {
       this.alive = false;
       this.hp = 0;
     }
