@@ -208,6 +208,12 @@ const MAT = {
   flowerYellow: new THREE.MeshLambertMaterial({ color: 0xFFEB3B }),
   treeTrunk: new THREE.MeshLambertMaterial({ color: 0x6D4C41 }),
   treeLeaves: new THREE.MeshLambertMaterial({ color: 0x2E7D32 }),
+  // Gems
+  gemEmerald: new THREE.MeshPhongMaterial({ color: 0x00FF88, emissive: 0x00AA44, emissiveIntensity: 0.5, transparent: true, opacity: 0.9 }),
+  gemRuby: new THREE.MeshPhongMaterial({ color: 0xFF4466, emissive: 0xAA0022, emissiveIntensity: 0.5, transparent: true, opacity: 0.9 }),
+  gemSapphire: new THREE.MeshPhongMaterial({ color: 0x4488FF, emissive: 0x0044AA, emissiveIntensity: 0.5, transparent: true, opacity: 0.9 }),
+  gemDiamond: new THREE.MeshPhongMaterial({ color: 0xFFFFFF, emissive: 0x8888FF, emissiveIntensity: 0.8, transparent: true, opacity: 0.95 }),
+  gemGlow: new THREE.MeshBasicMaterial({ color: 0xFFFFFF, transparent: true, opacity: 0.3 }),
 };
 
 // ============================================================
@@ -905,6 +911,85 @@ class StonePillar {
 }
 
 // ============================================================
+//  GEMS (Collectibles)
+// ============================================================
+class Gem {
+  constructor() {
+    this.group = new THREE.Group();
+    this.alive = false;
+    this.collected = false;
+    this.points = 10;
+    this.bobAngle = rand(0, Math.PI * 2);
+    this.gemType = 'emerald'; // emerald, ruby, sapphire, diamond
+    this.core = null;
+    this.glow = null;
+  }
+  spawn(x, y, type) {
+    this.alive = true;
+    this.collected = false;
+    this.group.position.set(x, y, 0);
+    this.group.visible = true;
+    this.gemType = type;
+    this.points = type === 'diamond' ? 50 : type === 'sapphire' ? 30 : type === 'ruby' ? 20 : 10;
+
+    // Clear old meshes
+    while (this.group.children.length > 0) {
+      this.group.remove(this.group.children[0]);
+    }
+
+    // Diamond/crystal shape (rotated box)
+    const coreGeo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    const mat = MAT['gem' + type.charAt(0).toUpperCase() + type.slice(1)];
+    this.core = new THREE.Mesh(coreGeo, mat);
+    this.core.castShadow = true;
+    this.group.add(this.core);
+
+    // Glow shell
+    const glowGeo = new THREE.BoxGeometry(0.8, 0.8, 0.8);
+    this.glow = new THREE.Mesh(glowGeo, MAT.gemGlow);
+    this.glow.material.color.copy(mat.emissive);
+    this.group.add(this.glow);
+
+    scene.add(this.group);
+  }
+  update(dt) {
+    if (!this.alive || this.collected) return;
+
+    // Spin animation
+    this.core.rotation.y += dt * 3;
+    this.core.rotation.x += dt * 1.5;
+    this.glow.rotation.y -= dt * 2;
+    this.glow.rotation.z += dt * 1;
+
+    // Bob up and down
+    this.bobAngle += dt * 2;
+    this.group.position.y += Math.sin(this.bobAngle) * 0.01;
+
+    // Pulse glow
+    const pulse = 0.2 + Math.sin(this.bobAngle * 2) * 0.1;
+    this.glow.material.opacity = pulse;
+  }
+  collect() {
+    this.collected = true;
+    this.alive = false;
+  }
+  reset() {
+    this.alive = false;
+    this.collected = false;
+    this.group.visible = false;
+    this.group.position.set(0, -100, 0);
+  }
+  getBounds() {
+    return {
+      minX: this.group.position.x - 0.5,
+      maxX: this.group.position.x + 0.5,
+      minY: this.group.position.y - 0.5,
+      maxY: this.group.position.y + 0.5,
+    };
+  }
+}
+
+// ============================================================
 //  MAIN GAME CLASS
 // ============================================================
 class Game {
@@ -928,15 +1013,21 @@ class Game {
       () => { const a = new Arrow(); return a; },
       (a) => a.reset()
     );
+    this.gemPool = new ObjectPool(
+      () => { const g = new Gem(); return g; },
+      (g) => g.reset()
+    );
 
     this.fireballs = [];
     this.arrows = [];
     this.archers = [];
     this.pillars = [];
+    this.gems = [];
 
     // Timers
     this.pillarTimer = 0;
     this.archerTimer = 0;
+    this.gemTimer = 0;
 
     // UI
     this.heartsEl = document.getElementById('hearts');
@@ -1010,8 +1101,10 @@ class Game {
     this.dragon.reset();
     this.fireballPool.releaseAll();
     this.arrowPool.releaseAll();
+    this.gemPool.releaseAll();
     this.fireballs = [];
     this.arrows = [];
+    this.gems = [];
     this.archers.forEach(a => scene.remove(a.group));
     this.archers = [];
     this.pillars.forEach(p => p.deactivate());
@@ -1056,6 +1149,17 @@ class Game {
     archer.setPosition(x, CFG.groundY + 0.25);
     scene.add(archer.group);
     this.archers.push(archer);
+  }
+
+  spawnGem() {
+    const gem = this.gemPool.acquire();
+    const x = this.dragon.group.position.x + rand(20, 40);
+    // Place gems at various heights to force maneuvering
+    const y = CFG.groundY + 3 + rand(0, 10);
+    const types = ['emerald', 'emerald', 'emerald', 'ruby', 'ruby', 'sapphire', 'diamond'];
+    const type = types[randInt(0, types.length - 1)];
+    gem.spawn(x, y, type);
+    this.gems.push(gem);
   }
 
   checkCollisions() {
@@ -1111,6 +1215,24 @@ class Game {
         this.particles.emit(this.dragon.group.position.clone(), 10, 0x888888, 6, 0.5);
         this.updateHearts();
         if (!this.dragon.alive) this.gameOver();
+      }
+    }
+
+    // Gems vs Dragon (collectible)
+    for (let i = this.gems.length - 1; i >= 0; i--) {
+      const gem = this.gems[i];
+      if (!gem.alive || gem.collected) continue;
+      const gb = gem.getBounds();
+      if (db.maxX > gb.minX && db.minX < gb.maxX && db.maxY > gb.minY && db.minY < gb.maxY) {
+        gem.collect();
+        this.score += gem.points;
+        this.updateScore();
+        // Sparkle particles
+        const colors = gem.gemType === 'diamond' ? 0xFFFFFF : gem.gemType === 'sapphire' ? 0x4488FF : gem.gemType === 'ruby' ? 0xFF4466 : 0x00FF88;
+        this.particles.emit(gem.group.position.clone(), 12, colors, 6, 0.6);
+        this.particles.emit(gem.group.position.clone(), 6, 0xFFFFFF, 4, 0.4);
+        this.gemPool.release(gem);
+        this.gems.splice(i, 1);
       }
     }
   }
@@ -1176,6 +1298,13 @@ class Game {
       this.spawnArcher();
     }
 
+    // Spawn gems
+    this.gemTimer += dt;
+    if (this.gemTimer >= 2.0) {
+      this.gemTimer = 0;
+      this.spawnGem();
+    }
+
     // Update fireballs
     for (let i = this.fireballs.length - 1; i >= 0; i--) {
       const fb = this.fireballs[i];
@@ -1220,6 +1349,17 @@ class Game {
       if (!pillar.active || pillar.group.position.x < this.dragon.group.position.x - 30) {
         pillar.deactivate();
         this.pillars.splice(i, 1);
+      }
+    }
+
+    // Update gems
+    for (let i = this.gems.length - 1; i >= 0; i--) {
+      const gem = this.gems[i];
+      gem.update(dt);
+      // Remove gems too far behind
+      if (gem.group.position.x < this.dragon.group.position.x - 30) {
+        this.gemPool.release(gem);
+        this.gems.splice(i, 1);
       }
     }
 
